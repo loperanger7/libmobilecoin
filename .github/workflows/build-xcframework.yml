@@ -53,22 +53,53 @@ jobs:
       - name: Lipo + xcframework assembly
         run: make clean-artifacts copy
 
+      - name: Inspect cargo build outputs (pre-copy)
+        run: |
+          set -eu
+          echo "=== libmobilecoin/target structure ==="
+          find libmobilecoin/target -name 'libmobilecoin.*' -maxdepth 4 2>/dev/null | head -20 || true
+          echo ""
+          echo "=== libmobilecoin/out/ios structure ==="
+          find libmobilecoin/out/ios -name 'libmobilecoin.*' -maxdepth 5 2>/dev/null | head -20 || true
+
       - name: Verify partial-fill symbol present
         run: |
           set -eu
           SYM="mc_transaction_builder_add_presigned_partial_fill_input"
+          ORIG_SYM="mc_transaction_builder_add_presigned_input"
           MISSING=0
           for slice in Artifacts/target/*/release/libmobilecoin.a; do
+            arch=$(basename "$(dirname "$(dirname "$slice")")")
+            echo "================================================================"
             echo "--- $slice ($(stat -f%z "$slice" 2>/dev/null || stat -c%s "$slice") bytes) ---"
-            echo "  archive member count: $(ar -t "$slice" 2>/dev/null | wc -l)"
-            echo "  archive members starting with 'libmobilecoin':"
-            ar -t "$slice" 2>/dev/null | grep -i '^libmobilecoin' | head -10 || echo "    (none)"
-            echo "  any 'add_presigned' bytes:"
-            grep -aoE 'mc_[a-z_]*add_presigned[a-z_]*' "$slice" | sort -u | head -20 || echo "    (none)"
-            if grep -aq "$SYM" "$slice"; then
+            echo ""
+            echo "  Top 5 archive members by size:"
+            mkdir -p /tmp/extract-$arch && cd /tmp/extract-$arch && rm -f *.o 2>/dev/null
+            ar -x "$OLDPWD/$slice" 2>/dev/null || ar -x "$GITHUB_WORKSPACE/$slice" 2>/dev/null || true
+            ls -laS *.o 2>/dev/null | head -6 || echo "    (no extracted files)"
+            cd "$OLDPWD"
+            echo ""
+            echo "  Members matching 'mobilecoin' (lib's own crate name):"
+            ar -t "$slice" 2>/dev/null | grep -E '^(lib)?mobilecoin[-.]' | head -10 || echo "    (none)"
+            echo ""
+            echo "  Try nm via xcrun:"
+            xcrun nm -gU "$slice" 2>&1 | grep "presigned" | head -5 || echo "    (no nm matches)"
+            echo ""
+            echo "  String search for 'add_presigned' (any prefix):"
+            LC_ALL=C grep -aoE 'add_presigned[a-z_]*' "$slice" 2>/dev/null | sort -u | head -10 || echo "    (none)"
+            echo ""
+            if LC_ALL=C grep -aq "$SYM" "$slice" 2>/dev/null; then
               echo "  OK: $SYM present"
+            elif xcrun nm -gU "$slice" 2>/dev/null | grep -q "$SYM"; then
+              echo "  OK (nm): $SYM present"
             else
               echo "  FAIL: $SYM missing"
+              echo "  Original symbol $ORIG_SYM check (sanity):"
+              if LC_ALL=C grep -aq "$ORIG_SYM" "$slice" 2>/dev/null; then
+                echo "    original IS present (only partial-fill missing — patch bug)"
+              else
+                echo "    original ALSO missing (lib code not in archive — build bug)"
+              fi
               MISSING=1
             fi
           done
