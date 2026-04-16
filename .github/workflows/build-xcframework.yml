@@ -37,8 +37,8 @@ jobs:
           rustup component add llvm-tools-preview rust-src
           cargo install cargo-binutils --locked
 
-      - name: Install cbindgen
-        run: brew install cbindgen
+      - name: Install build tools (cbindgen + protoc)
+        run: brew install cbindgen protobuf
 
       - name: Patch CMake
         run: ./tools/patch-cmake.sh
