@@ -1,0 +1,105 @@
+name: Build xcframework
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - name: Checkout (no submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Init Vendor/mobilecoin submodule (shallow)
+        run: |
+          git config --global submodule.Artifacts.update none
+          git submodule update --init --depth=1 Vendor/mobilecoin
+
+      - name: Install Rust toolchain
+        run: |
+          TOOLCHAIN=$(cat libmobilecoin/rust-toolchain)
+          echo "Installing $TOOLCHAIN"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal
+          rustup default "$TOOLCHAIN"
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios aarch64-apple-darwin x86_64-apple-darwin
+          rustup component add llvm-tools-preview rust-src
+          cargo install cargo-binutils --locked
+
+      - name: Install cbindgen
+        run: brew install cbindgen
+
+      - name: Patch CMake
+        run: ./tools/patch-cmake.sh
+
+      - name: Build xcframework
+        run: make framework
+
+      - name: Verify partial-fill symbol present
+        run: |
+          set -euo pipefail
+          XCF=Artifacts/LibMobileCoinLibrary.xcframework
+          for slice in "$XCF"/*/libmobilecoin*.a; do
+            echo "--- $slice ---"
+            nm -gU "$slice" 2>/dev/null | grep -q "_mc_transaction_builder_add_presigned_partial_fill_input" \
+              || { echo "FAIL: symbol missing in $slice"; exit 1; }
+          done
+          echo "OK: partial-fill symbol present in all slices"
+
+      - name: Zip xcframework
+        working-directory: Artifacts
+        run: zip -r LibMobileCoinLibrary.xcframework.zip LibMobileCoinLibrary.xcframework
+
+      - name: Compute SPM checksum
+        id: checksum
+        run: |
+          CHECKSUM=$(swift package compute-checksum Artifacts/LibMobileCoinLibrary.xcframework.zip)
+          echo "checksum=$CHECKSUM" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Build artifact"
+            echo ""
+            echo "**SPM checksum**: \`$CHECKSUM\`"
+            echo ""
+            echo "**Tag**: \`kyoto-${GITHUB_SHA::7}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="kyoto-${GITHUB_SHA::7}"
+          URL="https://github.com/${{ github.repository }}/releases/download/$TAG/LibMobileCoinLibrary.xcframework.zip"
+          NOTES=$(cat <<EOF
+          Patched libmobilecoin xcframework with the
+          \`mc_transaction_builder_add_presigned_partial_fill_input\` C FFI binding,
+          required for iOS DEQS partial-fill swap support.
+
+          Built from commit ${GITHUB_SHA}.
+
+          ## SPM consumer snippet
+
+          \`\`\`swift
+          .binaryTarget(
+              name: "LibMobileCoinLibrary",
+              url: "$URL",
+              checksum: "${{ steps.checksum.outputs.checksum }}"
+          )
+          \`\`\`
+          EOF
+          )
+          gh release create "$TAG" \
+            Artifacts/LibMobileCoinLibrary.xcframework.zip \
+            --title "$TAG (partial-fill FFI)" \
+            --notes "$NOTES" \
+            --target "${{ github.sha }}"
