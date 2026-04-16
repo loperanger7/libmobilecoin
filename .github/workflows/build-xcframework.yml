@@ -56,13 +56,13 @@ jobs:
       - name: Verify partial-fill symbol present
         run: |
           set -euo pipefail
-          XCF=Artifacts/LibMobileCoinLibrary.xcframework
           MISSING=0
-          for slice in "$XCF"/*/libmobilecoin*.a; do
+          # Inspect each per-arch .a (pre-lipo). nm on lipo'd fat archives needs -arch all.
+          for slice in Artifacts/target/*/release/libmobilecoin.a; do
             echo "--- $slice ---"
             echo "  add_presigned matches:"
-            nm "$slice" 2>/dev/null | grep "add_presigned" | head -10 || true
-            if nm "$slice" 2>/dev/null | grep -q "mc_transaction_builder_add_presigned_partial_fill_input"; then
+            nm -gU "$slice" 2>/dev/null | grep "add_presigned" || true
+            if nm -gU "$slice" 2>/dev/null | grep -q "mc_transaction_builder_add_presigned_partial_fill_input"; then
               echo "  OK: partial-fill symbol present"
             else
               echo "  FAIL: partial-fill symbol missing"
@@ -70,7 +70,7 @@ jobs:
             fi
           done
           if [ "$MISSING" -ne 0 ]; then exit 1; fi
-          echo "OK: partial-fill symbol present in all slices"
+          echo "OK: partial-fill symbol present in all per-arch slices"
 
       - name: Zip xcframework
         working-directory: Artifacts
