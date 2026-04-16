@@ -617,6 +617,65 @@ pub extern "C" fn mc_transaction_builder_add_presigned_input(
     })
 }
 
+/// Add a pre-signed Input *with partial-fill rules* to the transaction.
+/// Mirrors `add_presigned_input` but routes to the underlying
+/// `add_presigned_partial_fill_input` builder API, supplying the maker's change
+/// amount so the builder can compute the fill fraction and emit fractional
+/// outputs.
+///
+/// Returns an `McData*` containing the computed outlay amounts, packed as:
+///   `[count: u32 LE][value: u64 LE, token_id: u64 LE] x count`
+/// Caller frees with `mc_data_free`.
+///
+/// # Preconditions
+///
+/// * `transaction_builder` - must not have been previously consumed by a call
+///   to `build`. Block version must support partial fills (>= 3).
+/// * `presigned_input_proto_bytes` - serialized proto bytes for a Signed
+///   Contingent Input *with partial-fill rules*.
+/// * `sci_change_value` / `sci_change_token_id` - the maker's partial-fill
+///   change amount (the unfilled remainder returned to the SCI signer).
+///   Determines the fill fraction; must satisfy the SCI's
+///   `min_partial_fill_value` rule.
+///
+/// # Errors
+///
+/// * `LibMcError::InvalidInput`
+#[no_mangle]
+pub extern "C" fn mc_transaction_builder_add_presigned_partial_fill_input(
+    transaction_builder: FfiMutPtr<McTransactionBuilder>,
+    presigned_input_proto_bytes: FfiRefPtr<McBuffer>,
+    sci_change_value: u64,
+    sci_change_token_id: u64,
+    out_error: FfiOptMutPtr<FfiOptOwnedPtr<McError>>,
+) -> FfiOptOwnedPtr<McData> {
+    ffi_boundary_with_error(out_error, || {
+        let sci: SignedContingentInput =
+            mc_util_serial::decode(presigned_input_proto_bytes.as_slice())
+                .expect("presigned_input_proto_bytes could not be converted to SignedContingentInput");
+        let transaction_builder = transaction_builder
+            .into_mut()
+            .as_mut()
+            .expect("McTransactionBuilder instance has already been used to build a Tx");
+        let sci_change_amount = Amount {
+            value: sci_change_value,
+            token_id: TokenId::from(sci_change_token_id),
+        };
+        let outlay_amounts = transaction_builder
+            .add_presigned_partial_fill_input(sci, sci_change_amount)
+            .map_err(|err| LibMcError::InvalidInput(format!("{:?}", err)))?;
+
+        let count = outlay_amounts.len() as u32;
+        let mut packed = Vec::with_capacity(4 + outlay_amounts.len() * 16);
+        packed.extend_from_slice(&count.to_le_bytes());
+        for amt in &outlay_amounts {
+            packed.extend_from_slice(&amt.value.to_le_bytes());
+            packed.extend_from_slice(&u64::from(*amt.token_id).to_le_bytes());
+        }
+        Ok(packed)
+    })
+}
+
 /// # Preconditions
 ///
 /// * `transaction_builder` - must not have been previously consumed by a call
