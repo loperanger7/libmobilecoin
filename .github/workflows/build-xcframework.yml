@@ -43,8 +43,11 @@ jobs:
       - name: Patch CMake
         run: ./tools/patch-cmake.sh
 
-      - name: Build xcframework
-        run: make framework
+      - name: Build static libs (5 Apple archs)
+        run: make build
+
+      - name: Lipo + xcframework assembly
+        run: make clean-artifacts copy
 
       - name: Verify partial-fill symbol present
         run: |
