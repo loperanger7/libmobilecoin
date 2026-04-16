@@ -16,6 +16,10 @@ jobs:
   build:
     runs-on: macos-14
     timeout-minutes: 90
+    env:
+      # macos-14 runners ship CMake 4.x, which dropped support for
+      # cmake_minimum_required < 3.5 used in vendored rust-mbedtls.
+      CMAKE_POLICY_VERSION_MINIMUM: "3.5"
     steps:
       - name: Checkout (no submodules)
         uses: actions/checkout@v4
