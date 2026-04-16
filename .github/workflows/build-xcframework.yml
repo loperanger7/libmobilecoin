@@ -55,20 +55,21 @@ jobs:
 
       - name: Verify partial-fill symbol present
         run: |
-          set -euo pipefail
+          set -eu
           SYM="mc_transaction_builder_add_presigned_partial_fill_input"
           MISSING=0
-          # nm may fail on LTO/bitcode archives; fall back to strings on archive contents.
+          # grep -a treats binary as text; avoids nm/strings pipe quirks (LTO + SIGPIPE).
           for slice in Artifacts/target/*/release/libmobilecoin.a; do
-            echo "--- $slice ---"
-            echo "  nm -gU output (stderr visible):"
-            nm -gU "$slice" 2>&1 | grep "add_presigned" || echo "    (no nm matches)"
-            if nm -gU "$slice" 2>/dev/null | grep -q "$SYM"; then
-              echo "  OK (nm): $SYM present"
-            elif strings "$slice" | grep -q "$SYM"; then
-              echo "  OK (strings): $SYM present in archive"
+            echo "--- $slice ($(stat -f%z "$slice" 2>/dev/null || stat -c%s "$slice") bytes) ---"
+            echo "  archive members containing 'transaction':"
+            ar -t "$slice" 2>/dev/null | grep -i transaction | head -5 || echo "    (none)"
+            if grep -aq "$SYM" "$slice"; then
+              echo "  OK: $SYM string present in archive"
             else
               echo "  FAIL: $SYM missing"
+              # Show what add_presigned-related strings ARE present, for debugging.
+              echo "  add_presigned strings found in archive:"
+              grep -ao 'mc_transaction_builder_add_presigned[a-z_]*' "$slice" | sort -u | head -20 || echo "    (none)"
               MISSING=1
             fi
           done
