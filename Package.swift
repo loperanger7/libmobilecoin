@@ -56,7 +56,8 @@ let package = Package(
         ),
         .binaryTarget(
             name: "LibMobileCoinLibrary",
-            path: "Artifacts/LibMobileCoinLibrary.xcframework"
+            url: "https://github.com/loperanger7/libmobilecoin/releases/download/kyoto-1ee6404/LibMobileCoinLibrary.xcframework.zip",
+            checksum: "1b3c7189a32be12de38f7343234a7c3ce2472ffcc9a1b62f2b83e7b69d02b88f"
         )
     ]
 )
